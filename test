@@ -1,0 +1,95 @@
+import socket
+import struct
+
+def connect_to_giop_port(host, port):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host, port))
+        return sock
+    except Exception as e:
+        print(f"Failed to connect to GIOP port: {e}")
+        return None
+
+def send_request(sock, request):
+    try:
+        sock.sendall(request)
+    except Exception as e:
+        print(f"Failed to send request: {e}")
+
+def receive_response(sock):
+    try:
+        response = sock.recv(4096)
+        return response
+    except Exception as e:
+        print(f"Failed to receive response: {e}")
+        return None
+
+def create_giop_header(request_id, operation_length):
+    # GIOP Header (12 bytes)
+    magic = b'GIOP'
+    version = b'\x01\x00'  # Version 1.0
+    flags = b'\x00'        # Flags (0 for little-endian)
+    message_type = b'\x00' # Request
+    message_size = struct.pack('!I', 20 + operation_length)  # Message size
+
+    return magic + version + flags + message_type + message_size
+
+def create_request_body(request_id, operation):
+    # GIOP Request Body (20 bytes + operation length)
+    request_id = struct.pack('!I', request_id)
+    response_expected = b'\x01'  # True
+    reserved = b'\x00' * 3       # Reserved bytes
+    object_key_length = struct.pack('!I', 0)  # Object key length
+    object_key = b''             # Object key (empty)
+    operation_length = struct.pack('!I', len(operation))
+    operation_name = operation.encode('ascii')
+
+    return request_id + response_expected + reserved + object_key_length + object_key + operation_length + operation_name
+
+def parse_response(response):
+    # Skip GIOP Header (12 bytes)
+    body = response[12:]
+    
+    # Skip Request ID (4 bytes), Reply Status (4 bytes)
+    body = body[8:]
+    
+    # Read the sequence of functions (assuming it is a list of strings)
+    functions = []
+    while body:
+        str_len = struct.unpack('!I', body[:4])[0]
+        body = body[4:]
+        function_name = body[:str_len].decode('ascii')
+        body = body[str_len:]
+        functions.append(function_name)
+    
+    return functions
+
+def main():
+    host = '127.0.0.1'
+    port = 1050
+    request_id = 1
+    operation = 'list_functions'  # The operation name to enumerate functions
+
+    sock = connect_to_giop_port(host, port)
+    if not sock:
+        return
+
+    giop_header = create_giop_header(request_id, len(operation))
+    request_body = create_request_body(request_id, operation)
+    request = giop_header + request_body
+
+    send_request(sock, request)
+    response = receive_response(sock)
+    if not response:
+        return
+
+    functions = parse_response(response)
+    if functions:
+        print("Exposed functions:")
+        for func in functions:
+            print(func)
+    else:
+        print("No functions found or failed to parse response.")
+
+if __name__ == "__main__":
+    main()
